@@ -1,3 +1,4 @@
+import subprocess
 import webbrowser  
 import configparser  
 import threading
@@ -35,10 +36,12 @@ if not config.has_section('task'):
 config['task'].setdefault('auto_sync_mode', 'False')
 config['task'].setdefault('sync_direction', '0')
 config['task'].setdefault('sync_tasktime', '0')
+config['task'].setdefault('scan_interval', '0')
 config['task'].setdefault('path1', '')
 config['task'].setdefault('path2', '')
 config['task'].setdefault('only_show_unsync', 'True')
 config['task'].setdefault('force_refresh', 'False')
+config['task'].setdefault('current_running_tasks_limit', '2')
 TOTAL_SCANNED = 0
 SYNC_FILES = 0
 SYNC_DIRS = 0
@@ -337,6 +340,10 @@ def login_window():
     else:
         login_root.mainloop()
 def main_window(token, base_url):
+    root = tk.Tk()
+    root.title("Alist增量同步实用程序")
+    root.geometry("1280x800")
+
     global TOTAL_SCANNED, SYNC_FILES, SYNC_DIRS, UNSYNC_FOLDERS, \
            MISSING_SOURCE, MISSING_TARGET, SIZE_DIFF, SCAN_IN_PROGRESS, lock
     global nodes, ops_queue  
@@ -344,6 +351,7 @@ def main_window(token, base_url):
     ops_queue = []  
     exit_flag = threading.Event()  
     monitor_thread = None  
+    interval_var = tk.DoubleVar(value=float(config.get('task', 'scan_interval', fallback='0')))
 
     def update_table():
         global EXITING
@@ -394,9 +402,6 @@ def main_window(token, base_url):
             messagebox.showwarning("路径缺失", "原路径和目标路径不能为空")
             return
         threading.Thread(target=start_background_scan).start()
-    root = tk.Tk()
-    root.title("Alist增量同步实用程序")
-    root.geometry("1280x800")
     def on_close():
         global EXITING
         EXITING = True
@@ -412,11 +417,20 @@ def main_window(token, base_url):
         conf_window.title("配置任务")
         auto_sync_var = tk.IntVar(value=config.getboolean('task', 'auto_sync_mode', fallback=False))
         task_time_var = tk.StringVar(value=config.get('task', 'sync_tasktime', fallback='0'))
-        auto_sync_checkbox = tk.Checkbutton(conf_window, text="启用自动同步", variable=auto_sync_var)
+        auto_sync_checkbox = tk.Checkbutton(conf_window, text="启用自动同步,开启并保存后启动软件会自动扫描差异", variable=auto_sync_var)
         auto_sync_checkbox.grid(row=0, column=0, padx=5, pady=5, sticky='w')
         tk.Label(conf_window, text="自动任务延时启动时间（分钟）:").grid(row=1, column=0, padx=5, pady=5, sticky='w')
         task_time_entry = tk.Entry(conf_window, textvariable=task_time_var, width=10)
         task_time_entry.grid(row=1, column=1, padx=5, pady=5)
+        tk.Label(conf_window, text="注意：如果使用任务计划程序请注意，必须设置起始路径\n在错误的路径下会导致无法读配置文件而出错。\n会使用当前的路径和设置。").grid(row=4, column=0, columnspan=2, pady=10)
+        def open_task_scheduler():
+            # 打开Windows任务计划程序 taskschd.msc
+            try:
+                subprocess.Popen(['taskschd.msc'], shell=True)
+            except Exception as e:
+                messagebox.showerror("错误", f"无法打开任务计划程序：{e}")
+
+        tk.Button(conf_window, text="打开Windows任务计划程序", command=open_task_scheduler).grid(row=2, column=0, columnspan=2, pady=20)
         def save_config():
             config.set('task', 'auto_sync_mode', str(auto_sync_var.get()))
             config.set('task', 'sync_tasktime', task_time_var.get())
@@ -425,11 +439,13 @@ def main_window(token, base_url):
             config.set('task', 'path2', path2_var.get())
             config.set('task', 'only_show_unsync', str(show_unsync_var.get()))
             config.set('task', 'force_refresh', str(use_refresh_var.get()))
+            # 新增：保存扫描间隔时间配置
+            config.set('task', 'scan_interval', str(interval_var.get()))
             with open('conf.ini', 'w', encoding='utf-8') as configfile:
                 config.write(configfile)
             conf_window.destroy()
-        save_btn = tk.Button(conf_window, text="保存", command=save_config)
-        save_btn.grid(row=2, column=0, columnspan=2, pady=10)
+        save_btn = tk.Button(conf_window, text="保存任务设置", command=save_config)
+        save_btn.grid(row=2, column=1, columnspan=2, pady=10)
 
     root.grid_rowconfigure(1, weight=1)
     root.grid_columnconfigure(0, weight=1)
@@ -443,7 +459,7 @@ def main_window(token, base_url):
     browse_button1.grid(row=0, column=2, padx=5, pady=5)
     clear_button1 = tk.Button(main_frame, text="清除", command=lambda: path1_var.set(""))
     clear_button1.grid(row=0, column=3, padx=5, pady=5)
-    interval_var = tk.DoubleVar(value=0)
+    interval_var = tk.DoubleVar(value=float(config.get('task', 'scan_interval', fallback='0')))
     tk.Label(main_frame, text="遍历时间间隔(s):").grid(row=0, column=5, pady=5)
     scale = ttk.Scale(
         main_frame, 
@@ -479,6 +495,7 @@ def main_window(token, base_url):
         '3': "双向"
     }
     sync_direction_var = tk.StringVar()
+    current_running_tasks_limit_var = tk.IntVar(value=config.getint('task', 'current_running_tasks_limit', fallback=2))
     initial_key = config.get('task', 'sync_direction', fallback='0')
     selected_text = direction_map.get(initial_key, "不自动同步")
     sync_direction_var.set(initial_key)  
@@ -819,6 +836,10 @@ def main_window(token, base_url):
                 nodes.update(new_nodes)
             undone_tasks = get_tasks_undone(token, base_url)
             done_tasks = get_tasks_done(token, base_url)
+            current_running_tasks = 0
+            for task in undone_tasks:
+                if task['state'] == 1:
+                    current_running_tasks += 1
             for task in undone_tasks + done_tasks:
                 logger.debug(f"任务: {task}")
                 state = task['state']
@@ -880,10 +901,11 @@ def main_window(token, base_url):
             if not exit_flag.is_set():
                 root.after(0, update_table)
             sleep(10)
+            current_running_tasks_limit = current_running_tasks_limit_var.get()
             sync_direction = sync_direction_var.get()
             if sync_direction in ['1', '3']:
                 unsync_nodes = [node for node in nodes.values() if node.unsynctype == 1]
-                if unsync_nodes:
+                if unsync_nodes and current_running_tasks < current_running_tasks_limit:
                     selected_node = random.choice(unsync_nodes)
                     filename = selected_node.name
                     src_dir = os.path.dirname(os.path.join(initial_path1_o, selected_node.path))
@@ -892,7 +914,7 @@ def main_window(token, base_url):
                     logger.debug("随机自动同步文件：%s",filename)
             if sync_direction == '3':
                 unsync_nodes2 = [node for node in nodes.values() if node.unsynctype == 2]
-                if unsync_nodes2:
+                if unsync_nodes2 and current_running_tasks < current_running_tasks_limit:
                     selected_node2 = random.choice(unsync_nodes2)
                     filename = selected_node2.name
                     src_dir = os.path.dirname(os.path.join(initial_path2_o, selected_node2.path))

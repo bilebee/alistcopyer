@@ -79,15 +79,25 @@ def get_token(base_url, username, password):
         'username': username,
         'password': password
     }
-    response = requests.post(url, json=payload)
     logger.info("请求令牌，用户名: %s", username)
-    response.raise_for_status()  
+    try:
+        response = requests.post(url, json=payload, timeout=10)  # 添加超时防止无限等待
+        response.raise_for_status()
+    except requests.exceptions.ConnectionError as e:
+        logger.error("无法连接到Alist服务器: %s", str(e))
+        raise Exception("无法连接到服务器，请检查URL和网络连接。")
+    except requests.exceptions.HTTPError as e:
+        logger.error("HTTP错误: %s", str(e))
+        raise Exception(f"HTTP错误: {response.status_code}, {response.text}")
+    except Exception as e:
+        logger.error("认证过程中发生错误: %s", str(e))
+        raise
     token_data = response.json().get('data', {})
     logger.debug("令牌响应: %s", response)
     logger.debug("令牌数据: %s", token_data)
     if not token_data or 'token' not in token_data:
         logger.error("认证失败：响应中缺少有效的Token数据")
-        raise Exception("认证失败：响应中缺少有效的Token数据")
+        raise Exception("认证失败：无效的响应数据")
     token = token_data['token']
     return token
 def get_directory_contents(path, token, base_url):   #只有列出目录
@@ -143,6 +153,61 @@ def list_files_and_directories(path, token, base_url, refresh=False):    # 列�
         return []
     content = data.get('content', [])
     return content if isinstance(content, list) else []
+
+def show_verification_info(node, path1, path2, token, base_url, root):  
+    src_full = os.path.join(path1, node.path)
+    dst_full = os.path.join(path2, node.path)
+    if node.unsynctype == 1:
+        try:
+            src_info = get_obj_info(src_full, token, base_url)
+        except Exception as e:
+            messagebox.showerror("错误", f"获取源文件信息失败: {str(e)}")
+            return
+        dst_info = None
+    elif node.unsynctype == 2:
+        try:
+            dst_info = get_obj_info(dst_full, token, base_url)
+        except Exception as e:
+            messagebox.showerror("错误", f"获取目标文件信息失败: {str(e)}")
+            return
+        src_info = None
+    else:
+        try:
+            src_info = get_obj_info(src_full, token, base_url)
+            dst_info = get_obj_info(dst_full, token, base_url)
+        except Exception as e:
+            messagebox.showerror("错误", f"获取校验信息失败: {str(e)}")
+            return
+    
+    info_win = tk.Toplevel()
+    info_win.title("文件校验信息")
+    info_win.geometry("600x400")
+    
+    text = tk.Text(info_win, wrap=tk.WORD)
+    text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+    
+    text.insert(tk.END, f"源路径: {src_full}\n")
+    if src_info is not None:
+        text.insert(tk.END, "\n源文件校验信息:\n")
+        text.insert(tk.END, f"HashInfo: {src_info.get('hashinfo', 'N/A')}\n")
+        text.insert(tk.END, f"Hash_Info: {src_info.get('hash_info', 'N/A')}\n")
+    else:
+        text.insert(tk.END, "\n源路径不存在或无法访问\n")
+    
+    text.insert(tk.END, f"\n目标路径: {dst_full}\n")
+    if dst_info is not None:
+        text.insert(tk.END, "\n目标文件校验信息:\n")
+        text.insert(tk.END, f"HashInfo: {dst_info.get('hashinfo', 'N/A')}\n")
+        text.insert(tk.END, f"Hash_Info: {dst_info.get('hash_info', 'N/A')}\n")
+    else:
+        text.insert(tk.END, "\n目标路径不存在或无法访问\n")
+    
+    scrollbar = tk.Scrollbar(info_win, command=text.yview)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    text.config(yscrollcommand=scrollbar.set)
+    
+    info_win.transient(root)
+    info_win.grab_set()
 
 def get_obj_info(obj_fullpath, token, base_url):
     url = f"{base_url}/api/fs/get"
@@ -301,7 +366,7 @@ def login_window():
         except Exception as e:
             config['DEFAULT']['password'] = ''
             config['DEFAULT']['autologin'] = 'False'
-            raise e
+            messagebox.showerror("登录失败", f"错误: {str(e)}")  
         finally:
             with open('conf.ini', 'w', encoding='utf-8') as configfile:
                 config.write(configfile)
@@ -561,6 +626,12 @@ def main_window(token, base_url):
         menu.add_command(label="刷新所在目录状态", command=lambda p=parent_path: refresh_path(p))
         if node.unsynctype == 1:
             menu.add_command(label="直接复制", command=lambda p=path: direct_copy_item(p))
+        if not node.is_dir and node.unsynctype in (0,1,2,3,4):
+            menu.add_command(
+                label="查看校验信息",
+                command=lambda node=node, p1=path1, p2=path2:  
+                    show_verification_info(node, p1, p2, token, BASE_URL, root)  
+            )
         show_source = True
         show_target = True
         if node.unsynctype == 1:
@@ -922,9 +993,10 @@ def main_window(token, base_url):
                     copy_files(src_dir, dst_dir, [filename], token, base_url)
                     logger(f"随机反向同步文件：%s",filename)
             if all(node.unsynctype == 0 for node in nodes.values()):
-                exit_flag.set()
-                logger.info("所有文件已同步，程序退出。")
-                root.after(0, root.destroy)  
+                if config.getboolean('task', 'auto_sync_mode'):  
+                    exit_flag.set()
+                    logger.info("所有文件已同步，程序退出。")
+                    root.after(0, root.destroy)  
                 return
             if exit_flag.is_set():
                 return

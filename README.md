@@ -62,4 +62,4 @@
 
 ## 如果您想自己打包exe
 下载代码文件
-安装python311和pyyinstaller，然后运行packpy.bat
+安装python311和pyinstaller，然后运行packpy.bat

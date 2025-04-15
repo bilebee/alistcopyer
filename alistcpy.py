@@ -42,6 +42,8 @@ config['task'].setdefault('path2', '')
 config['task'].setdefault('only_show_unsync', 'True')
 config['task'].setdefault('force_refresh', 'False')
 config['task'].setdefault('current_running_tasks_limit', '2')
+# 新增配置项默认值
+config['task'].setdefault('hide_source_missing', 'False')
 TOTAL_SCANNED = 0
 SYNC_FILES = 0
 SYNC_DIRS = 0
@@ -434,6 +436,9 @@ def main_window(token, base_url):
         for node in nodes.values():
             if show_unsync_var.get() and node.syncok:
                 continue
+            # 新增过滤条件
+            if hide_source_missing_var.get() and node.unsynctype == 2:
+                continue
             is_dir_text = "文件夹" if node.is_dir else "文件"
             unsync_reason = unsynctype_mapping.get(node.unsynctype, "未知")
             if (node.syncok and node.unsynctype !=0) or (not node.syncok and node.unsynctype ==0):
@@ -579,9 +584,12 @@ def main_window(token, base_url):
     sync_direction_combobox.bind("<<ComboboxSelected>>", on_sync_direction_change)
     tk.Label(main_frame, text="自动同步方向:").grid(row=0, column=10, padx=5, pady=5)
     sync_direction_combobox.grid(row=0, column=11, padx=5, pady=5)
-    show_unsync_var = tk.IntVar(value=1 if config.getboolean('task', 'only_show_unsync', fallback=True) else 0)
+    show_unsync_var = tk.IntVar(value=config.getboolean('task', 'only_show_unsync', fallback=True))
+    hide_source_missing_var = tk.IntVar(value=config.getboolean('task', 'hide_source_missing', fallback=False))
     filter_checkbox = tk.Checkbutton(main_frame, text="仅显示未同步", variable=show_unsync_var, command=update_table)
     filter_checkbox.grid(row=1, column=5, pady=5)  
+    hide_source_missing_checkbox = tk.Checkbutton(main_frame, text="不显示原缺失", variable=hide_source_missing_var, command=update_table)
+    hide_source_missing_checkbox.grid(row=1, column=8, pady=5)  
     refresh_checkbox = tk.Checkbutton(main_frame, text="使用强制刷新", variable=use_refresh_var)
     refresh_checkbox.grid(row=1, column=6, pady=5)
     diff_frame = tk.Frame(root)
@@ -1056,7 +1064,8 @@ def main_window(token, base_url):
             is_scanning = SCAN_IN_PROGRESS
         scanned_count.set(str(current_scanned))
         if is_scanning:
-            root.after(100, refresh_ui)  
+            root.after(100, refresh_ui) 
+            update_table() 
         else:
             pass
     def build_tree(path1_base, path2_base, current_rel_path, interval=0.1, use_refresh=False, max_depth=16):
@@ -1204,7 +1213,7 @@ def main_window(token, base_url):
     tk.Label(status_frame, text="扫描状态：").pack(side=tk.LEFT)
     scan_status = tk.StringVar(value="等待扫描")
     tk.Label(status_frame, textvariable=scan_status).pack(side=tk.LEFT)
-    tk.Label(status_frame, text="已扫描对象：").pack(side=tk.LEFT)
+    tk.Label(status_frame, text="    扫描操作总计数：").pack(side=tk.LEFT)
     scanned_count = tk.StringVar(value="0")
     tk.Label(status_frame, textvariable=scanned_count).pack(side=tk.LEFT)
     sync_files_var = tk.StringVar(value="0")
@@ -1213,17 +1222,17 @@ def main_window(token, base_url):
     missing_source_var = tk.StringVar(value="0")
     missing_target_var = tk.StringVar(value="0")
     size_diff_var = tk.StringVar(value="0")
-    tk.Label(status_frame, text=" | 同步文件：").pack(side=tk.LEFT)
+    tk.Label(status_frame, text="  扫描结果总计数： 同步文件：").pack(side=tk.LEFT)
     tk.Label(status_frame, textvariable=sync_files_var).pack(side=tk.LEFT)
-    tk.Label(status_frame, text=" | 同步目录：").pack(side=tk.LEFT)
+    tk.Label(status_frame, text="  同步目录：").pack(side=tk.LEFT)
     tk.Label(status_frame, textvariable=sync_dirs_var).pack(side=tk.LEFT)
-    tk.Label(status_frame, text=" | 未同步文件夹：").pack(side=tk.LEFT)
+    tk.Label(status_frame, text="  未同步文件夹：").pack(side=tk.LEFT)
     tk.Label(status_frame, textvariable=unsync_folders_var).pack(side=tk.LEFT)
-    tk.Label(status_frame, text=" | 源缺失：").pack(side=tk.LEFT)
+    tk.Label(status_frame, text="  源缺失：").pack(side=tk.LEFT)
     tk.Label(status_frame, textvariable=missing_source_var).pack(side=tk.LEFT)
-    tk.Label(status_frame, text=" | 目标缺失：").pack(side=tk.LEFT)
+    tk.Label(status_frame, text="  目标缺失：").pack(side=tk.LEFT)
     tk.Label(status_frame, textvariable=missing_target_var).pack(side=tk.LEFT)
-    tk.Label(status_frame, text=" | 大小不同：").pack(side=tk.LEFT)
+    tk.Label(status_frame, text="  大小不同：").pack(side=tk.LEFT)
     tk.Label(status_frame, textvariable=size_diff_var).pack(side=tk.LEFT)
     auto_sync_canceled = False  
     def show_auto_sync_dialog(parent, total_seconds, on_start_callback):

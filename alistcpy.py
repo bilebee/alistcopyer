@@ -1061,11 +1061,22 @@ def main_window(token, base_url):
     def refresh_ui():
         with lock:
             current_scanned = TOTAL_SCANNED
+            sync_files = SYNC_FILES
+            sync_dirs = SYNC_DIRS
+            unsync_folders = UNSYNC_FOLDERS
+            missing_source = MISSING_SOURCE
+            missing_target = MISSING_TARGET
+            size_diff = SIZE_DIFF
             is_scanning = SCAN_IN_PROGRESS
         scanned_count.set(str(current_scanned))
+        sync_files_var.set(str(sync_files))
+        sync_dirs_var.set(str(sync_dirs))
+        unsync_folders_var.set(str(unsync_folders))
+        missing_source_var.set(str(missing_source))
+        missing_target_var.set(str(missing_target))
+        size_diff_var.set(str(size_diff))
         if is_scanning:
             root.after(100, refresh_ui) 
-            update_table() 
         else:
             pass
     def build_tree(path1_base, path2_base, current_rel_path, interval=0.1, use_refresh=False, max_depth=16):
